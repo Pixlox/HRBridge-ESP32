@@ -6,3 +6,6 @@ Essentially, the Apple Watch application pings HR info to the iPhone application
 
 ## Why not broadcast from iPhone?
 This solution is made for specific scenarios where the iPhone must _also_ be connected to the target device. I created this in particular, because my Magene C606 could not pair with my Apple Watch using HeartCast (or similar applications). It may be helpful for you too!
+
+## Showcase
+![Showcase](Images/poc.jpeg)

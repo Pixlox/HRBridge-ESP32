@@ -1,6 +1,15 @@
+//
+//  WorkoutManager.swift
+//  HRBridge
+//
+//  Created by Omar Hafeezullah on 27/1/2026.
+//
+
+
 import Foundation
 import HealthKit
 import WatchConnectivity
+import Combine
 
 class WorkoutManager: NSObject, ObservableObject {
     
@@ -34,10 +43,14 @@ class WorkoutManager: NSObject, ObservableObject {
         ]
         
         healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead) { success, error in
-            if success {
-                print("HealthKit authorized on Watch")
-            } else {
-                print("HealthKit authorization failed: \(error?.localizedDescription ?? "unknown")")
+            DispatchQueue.main.async {
+                if success {
+                    print("HealthKit authorized on Watch")
+                    self.statusMessage = "Ready to start"
+                } else {
+                    self.statusMessage = "Need Health permission"
+                    print("HealthKit authorization failed: \(error?.localizedDescription ?? "unknown")")
+                }
             }
         }
     }
@@ -62,22 +75,33 @@ class WorkoutManager: NSObject, ObservableObject {
             let startDate = Date()
             session?.startActivity(with: startDate)
             builder?.beginCollection(withStart: startDate) { success, error in
-                if success {
-                    DispatchQueue.main.async {
+                DispatchQueue.main.async {
+                    if success {
                         self.isRunning = true
                         self.statusMessage = "Monitoring..."
+                        print("Workout started successfully")
+                    } else {
+                        self.statusMessage = "Failed to start"
+                        print("Failed to start collection: \(error?.localizedDescription ?? "unknown")")
                     }
                 }
             }
         } catch {
+            DispatchQueue.main.async {
+                self.statusMessage = "Error starting"
+            }
             print("Failed to start workout: \(error.localizedDescription)")
         }
     }
     
     func stopWorkout() {
         session?.end()
-        isRunning = false
-        statusMessage = "Stopped"
+        builder?.endCollection(withEnd: Date()) { success, error in
+            DispatchQueue.main.async {
+                self.isRunning = false
+                self.statusMessage = "Stopped"
+            }
+        }
     }
     
     private func sendHeartRateToPhone(_ hr: Int) {
@@ -88,7 +112,7 @@ class WorkoutManager: NSObject, ObservableObject {
         
         let message = ["heartRate": hr]
         WCSession.default.sendMessage(message, replyHandler: nil) { error in
-            print("Error sending HR: \(error.localizedDescription)")
+            print("Error sending HR to phone: \(error.localizedDescription)")
         }
     }
 }
@@ -98,10 +122,24 @@ extension WorkoutManager: HKWorkoutSessionDelegate {
     func workoutSession(_ workoutSession: HKWorkoutSession, didChangeTo toState: HKWorkoutSessionState, from fromState: HKWorkoutSessionState, date: Date) {
         DispatchQueue.main.async {
             self.isRunning = (toState == .running)
+            
+            switch toState {
+            case .running:
+                self.statusMessage = "Running"
+            case .ended:
+                self.statusMessage = "Ended"
+            case .paused:
+                self.statusMessage = "Paused"
+            default:
+                break
+            }
         }
     }
     
     func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
+        DispatchQueue.main.async {
+            self.statusMessage = "Session failed"
+        }
         print("Workout session failed: \(error.localizedDescription)")
     }
 }
@@ -110,9 +148,12 @@ extension WorkoutManager: HKWorkoutSessionDelegate {
 extension WorkoutManager: HKLiveWorkoutBuilderDelegate {
     func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder, didCollectDataOf collectedTypes: Set<HKSampleType>) {
         for type in collectedTypes {
-            guard type == HKQuantityType.quantityType(forIdentifier: .heartRate) else { continue }
+            guard let quantityType = type as? HKQuantityType,
+                  quantityType == HKQuantityType.quantityType(forIdentifier: .heartRate) else {
+                continue
+            }
             
-            let statistics = workoutBuilder.statistics(for: type)
+            let statistics = workoutBuilder.statistics(for: quantityType)
             let heartRateUnit = HKUnit.count().unitDivided(by: .minute())
             let value = statistics?.mostRecentQuantity()?.doubleValue(for: heartRateUnit)
             
@@ -120,18 +161,26 @@ extension WorkoutManager: HKLiveWorkoutBuilderDelegate {
                 let heartRateInt = Int(hr)
                 DispatchQueue.main.async {
                     self.heartRate = heartRateInt
-                    self.sendHeartRateToPhone(heartRateInt)
+                    print("Heart rate: \(heartRateInt) BPM")
                 }
+                self.sendHeartRateToPhone(heartRateInt)
             }
         }
     }
     
-    func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {}
+    func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {
+        // Handle workout events if needed
+    }
 }
 
 // MARK: - WCSessionDelegate
 extension WorkoutManager: WCSessionDelegate {
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+        DispatchQueue.main.async {
+            if activationState == .activated {
+                self.statusMessage = "Connected to iPhone"
+            }
+        }
         print("Watch session activated: \(activationState.rawValue)")
     }
 }
